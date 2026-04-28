@@ -3,7 +3,7 @@
 ## 1. Executive Summary
 Coral is an advanced, context-aware AI desktop agent designed to seamlessly bridge the gap between user intent and system-level execution. By integrating multi-model intelligence (Google Gemini and Groq) with robust perception capabilities (OCR and UI Automation) and workflow automation (Macro Engine and Everything Search API), Coral acts as an omnipresent desktop companion. It is engineered to "see" the screen, "understand" complex language, and "execute" multi-step actions effortlessly.
 
-![Coral Banner](https://github.com/NITHEESH-14/Coral/raw/main/Coral_Snip.png)
+![Coral Banner](readmestock/Screenshot%202026-04-28%20230241.png)
 
 ## 2. Core Architecture & Intelligence
 
@@ -19,6 +19,8 @@ Coral does not operate blind. It uses overlapping perception techniques to under
 - **UI Automation (UIA) Scraper:** Analyzes the active desktop window to extract structured data, buttons, and text hierarchies even when optical character recognition (OCR) might fail.
 - **Context Generation:** The agent receives a JSON-structured digest of the current desktop state (active folders, highlighted files, selected text) alongside every prompt.
 
+![Coral Perception](readmestock/Screenshot%202026-04-28%20230350.png)
+
 ## 3. Features & Tools
 
 ### 3.1 The Capture Suite
@@ -30,6 +32,8 @@ When a snip is taken, Coral opens a rich image editor:
 ### 3.2 Automation & Macro Engine
 - **Macro Recording (`Ctrl+Shift+X`):** Records sequential user actions (mouse clicks, dragging, keyboard inputs).
 - **Macro Playback:** Replays recorded actions with adjustable repeat counts, useful for repetitive data entry or game automation.
+
+![Coral Automation](readmestock/Screenshot%202026-04-28%20230510.png)
 - **Fail-Safes:** Includes toast notifications and confirmation dialogues before executing destructive or repetitive macros.
 
 ### 3.3 Universal Application Launcher
@@ -110,5 +114,20 @@ Coral supports a massive suite of slash commands and conversational prompts.
 
 ---
 
-## 5. Security & Isolation
-Coral enforces strict data hygiene. The project utilizes localized `.env` variables to store API tokens (Google Gemini / Groq). The agent cannot transmit these keys, and repository push protections ensure that the project is completely open-source-safe. Operations are strictly tethered to the user's active context window unless explicitly overridden by global commands.
+## 5. 🛠️ Technical Implementation & Stack
+
+Coral is built upon a robust stack of modern Python libraries and specialized APIs to ensure high performance and reliability:
+
+- **Frontend Interface:** Developed using **PyQt5**, utilizing frameless window hints, translucent backgrounds, and custom event filters to create a modern, non-intrusive "glassmorphic" desktop overlay.
+- **Intelligence Layer:** 
+    - **Google GenAI SDK:** Powers the high-reasoning vision and multimodal tasks.
+    - **Groq SDK:** Provides ultra-low latency response times for text-based interactions and system commands.
+- **Deep System Search:** Integrated with the **Everything Search SDK (DLL)** via `ctypes` for near-instantaneous indexing and retrieval of system-wide applications and files.
+- **Perception & Automation:**
+    - **Pillow (PIL):** Handles advanced image processing, cropping, and annotation.
+    - **PyAutoGUI & Keyboard:** Manages the macro engine for simulated mouse and keyboard events.
+    - **PyWin32 (win32gui):** Interacts with the Windows API for window management, focus control, and shell execution.
+- **Data Persistence:** Uses a lightweight JSON-based configuration manager for real-time setting synchronization and state management.
+
+---
+© 2026 Coral Project | Built for the future of Desktop Intelligence.
