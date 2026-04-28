@@ -1,0 +1,487 @@
+
+
+CORAL
+Full Implementation Plan
+AI-Powered Desktop Snipping Assistant
+Windows — Python + PyQt5 — Groq API
+
+
+
+1. Project Overview
+Coral is a global screen-snipping tool that understands context. When you snip any region of your screen, a floating AI chat popup appears. You type what you want done in plain English, and Coral reads your OS context — folder paths, file names, desktop icons — and executes the action on the real filesystem.
+
+Coral does not use screenshots for AI processing. Instead, it reads OS-level metadata directly, making it faster, cheaper, and more accurate than a vision-based approach.
+
+Core Concept
+Snip any region using Ctrl + Shift + S
+Floating popup appears with the snipped image + a chat textbox
+Type your request in plain English
+Coral confirms what it will do before executing
+You approve, reject, or adjust — like a conversation
+Coral executes the action on your real filesystem
+Say undo at any time to reverse the last action
+
+Decisions Locked
+Decision
+Choice
+Framework
+Python + PyQt5
+Operating System
+Windows only
+Trigger Hotkey
+Ctrl + Shift + S
+Popup UI
+Snipped image + chat textbox
+Interaction Style
+Chatbot — confirm before execute
+AI Model
+Groq API (Llama 3.3 70B) — primary
+AI Fallback
+Ollama local — offline backup
+Context Method
+OS metadata — no image needed for known surfaces
+Scope
+Single window at snip time
+Stale Path Fix
+Snapshot frozen at snip moment
+Failed Positioning
+Drop anywhere on desktop as fallback
+
+
+2. Architecture
+
+Project Structure
+coral/
+├── main.py              — Entry point, hotkey listener, app lifecycle
+├── overlay.py           — Transparent fullscreen snipping overlay
+├── popup.py             — Floating chat popup UI
+├── context.py           — OS context capture and classification
+├── executor.py          — Action execution on the filesystem
+├── undo_manager.py      — Undo history and reverse actions
+├── groq_client.py       — Groq API call + system prompt
+└── utils.py             — Constants, helpers, error handling
+
+Data Flow
+The complete pipeline from trigger to action execution:
+
+Step 1 — User presses Ctrl + Shift + S
+Step 2 — PyQt5 transparent overlay appears fullscreen
+Step 3 — User draws a region by clicking and dragging
+Step 4 — At mouse release: OS context is read AND screenshot of region is taken simultaneously
+Step 5 — Context is frozen into a snapshot dict (never updated again)
+Step 6 — Floating popup appears showing snipped image + empty chat
+Step 7 — User types request and hits Enter
+Step 8 — Request + frozen context sent to Groq API
+Step 9 — Groq returns a friendly message + structured JSON action
+Step 10 — Coral shows the message to the user (confirmation)
+Step 11 — User says yes / no / modify
+Step 12 — If yes: executor runs the action, undo manager saves the reverse
+Step 13 — Coral confirms completion in the chat
+
+Context Object Structure
+This is the frozen snapshot sent to Groq with every request:
+
+{
+"captured_at": "2025-04-07T10:23:00",
+"context_type": "desktop",   // desktop | file_explorer | unknown_app
+"region": { "x": 120, "y": 80, "w": 600, "h": 400 },
+"path": "C:/Users/User/Desktop",
+"items": [
+{ "name": "Resume.pdf",  "type": "file",    "position": [130, 90] },
+{ "name": "Projects",   "type": "folder",  "position": [210, 90] },
+{ "name": "Chrome",     "type": "shortcut","position": [290, 90] }
+]
+}
+
+
+3. Implementation Phases
+
+Phase 1 — Hotkey and Overlay
+Goal: Ctrl + Shift + S opens a transparent overlay. User draws a region. Coordinates are saved.
+
+Files: main.py, overlay.py
+
+Register a global hotkey listener using pynput
+On trigger, launch a PyQt5 fullscreen transparent window
+User clicks and drags to define the snip region
+Draw a visible selection rectangle in real time as user drags
+On mouse release, save region as (x, y, w, h) and close overlay
+Pass the region coordinates to the next phase
+
+Done when: Pressing Ctrl + Shift + S, drawing a region, and printing the coordinates to console works correctly.
+
+
+Phase 2 — OS Context Capture
+Goal: At the exact moment of snip, read everything about the environment and freeze it.
+
+Files: context.py
+
+Use win32gui to detect which window class sits under the snip region
+Classify the context — desktop, file explorer, or unknown app
+Desktop: window class is Progman or WorkerW
+File Explorer: window class is CabinetWClass
+Unknown: anything else
+If desktop: use win32api to read icon names and positions from the desktop
+If file explorer: use pywinauto to read the address bar path and visible file list
+If unknown app: flag for image fallback (not needed for hackathon scope)
+Build the frozen context dict with all captured data
+Also capture a PIL screenshot of the region for display in the popup
+
+Done when: Snipping the desktop prints a list of visible icons. Snipping File Explorer prints the current folder path and visible files.
+
+
+Phase 3 — Popup UI
+Goal: After snipping, a floating chat window appears near the snipped region showing the snipped image and a text input.
+
+Files: popup.py
+
+Create a PyQt5 frameless always-on-top window
+Position it near the snip region (offset slightly so it doesn't cover the snip)
+Top section: display the snipped image (PIL image converted to QPixmap)
+Middle section: scrollable chat history area
+Bottom section: text input box + send button
+On Enter or Send: emit the typed message to the chat pipeline
+Show a loading indicator while waiting for Groq response
+Dismiss popup on Escape key or clicking outside
+
+Done when: Popup appears after snipping, image is shown, you can type a message and it prints to console.
+
+
+Phase 4 — Groq API Integration
+Goal: User message plus frozen context goes to Groq. Groq returns a human-readable confirmation message and a structured JSON action.
+
+Files: groq_client.py
+
+Set up Groq API client with Llama 3.3 70B model
+Write a strict system prompt that forces Groq to always return two parts:
+Part 1: A friendly human-readable message explaining what it will do
+Part 2: A JSON action block with action type and parameters
+Pass the full context object and user message in each request
+Parse the response and split into message and JSON
+Handle malformed responses gracefully with a retry or error message
+Keep full conversation history per snip session for multi-turn chat
+
+Groq System Prompt (Core)
+You are Coral, a desktop AI assistant for Windows.
+You receive context about what was snipped and the user's request.
+Always reply with:
+1. A friendly confirmation message (what you will do).
+2. A JSON action block in this exact format:
+{ "action": "...", "name": "...", "path": "..." }
+
+Available actions:
+create_folder, create_file, move_file,
+rename_file, create_shortcut, arrange_by_type
+
+Never execute anything. Only describe and return JSON.
+Always respond in JSON with keys: message, action_json.
+
+Done when: Typing create a folder called Work in Downloads returns the correct JSON action block.
+
+
+Phase 5 — Action Executor
+Goal: The JSON action from Groq is translated into real filesystem operations.
+
+Files: executor.py
+
+create_folder — os.makedirs at the given path
+create_file — open and write an empty file at the given path
+move_file — shutil.move from source to destination
+rename_file — os.rename with old and new name
+create_shortcut — use win32com.client to create a .lnk file
+arrange_by_type — scan folder, categorize by extension, move into subfolders
+Images: .jpg .jpeg .png .gif .bmp .webp → Images folder
+Documents: .pdf .docx .xlsx .pptx .txt .csv → Documents folder
+Videos: .mp4 .mov .avi .mkv .wmv → Videos folder
+Audio: .mp3 .wav .flac .aac → Audio folder
+Others: everything else → Others folder
+Always use send2trash for any deletion — never permanently delete
+Return a result dict with success status and details for the undo manager
+
+Done when: Each of the six actions executes correctly on real files and folders.
+
+
+Phase 6 — Undo Manager
+Goal: Every action saves its exact reverse. Saying undo reverses the last action cleanly.
+
+Files: undo_manager.py
+
+Maintain an in-memory history stack of actions and their reverses
+Before each action, push a reverse instruction to the stack
+create_folder reverse → delete_folder
+move_file reverse → move_file back to original location
+rename_file reverse → rename back to original name
+create_file reverse → send2trash the file
+arrange_by_type reverse → move all files back to original folder
+When user says undo in the chat, pop the last item and execute the reverse
+Confirm the undo action in the chat before and after executing
+Handle empty history gracefully — tell the user there is nothing to undo
+
+Done when: Creating a folder and then saying undo deletes it. Moving files and saying undo moves them back.
+
+
+Phase 7 — Full Chat Flow
+Goal: The complete conversational flow works end to end across all scenarios.
+
+Files: popup.py, groq_client.py
+
+User types request → Groq returns confirmation message → shown in chat
+User says yes → executor runs → undo manager saves reverse → done message shown
+User says no → cancelled message shown, nothing executed
+User modifies the request → Groq re-interprets with full chat history → new confirmation
+User says undo → undo manager reverses last action → confirmation shown
+Error during execution → friendly error message shown in chat with suggestion
+Groq API failure → show error, offer to retry
+
+Done when: A full back and forth conversation works for all actions including undo.
+
+
+Phase 8 — Demo Polish
+Goal: Coral looks and feels production-ready for the hackathon demo.
+
+System tray icon using pystray — Coral runs silently in background
+Tray menu: Open, Settings, Quit
+Smooth overlay fade-in animation when snipping
+Coral icon and branding in the popup header
+Loading spinner animation while Groq processes the request
+Keyboard shortcut Escape to close popup at any time
+Graceful handling of permission errors with helpful messages
+Test all six actions end to end on a clean demo folder
+Test undo for each action type
+Test multi-turn conversation: modify request mid-conversation
+
+
+4. Full Tech Stack
+
+Library
+Purpose
+Install
+PyQt5
+UI — overlay, popup, chat window
+pip install PyQt5
+pynput
+Global hotkey listener
+pip install pynput
+pywin32
+Windows OS API access
+pip install pywin32
+pywinauto
+File Explorer path reading
+pip install pywinauto
+Pillow (PIL)
+Screenshot capture and image display
+pip install Pillow
+groq
+Groq API client
+pip install groq
+send2trash
+Safe deletion (always recoverable)
+pip install send2trash
+pystray
+System tray icon
+pip install pystray
+win32com
+Shortcut (.lnk) creation
+Included in pywin32
+shutil
+File move and copy
+Built into Python
+os
+Folder and file creation
+Built into Python
+
+One-Line Install
+pip install PyQt5 pynput pywin32 pywinauto Pillow groq send2trash pystray
+
+
+5. Supported Actions
+
+Action
+What It Does
+Example Request
+Undo?
+create_folder
+Creates a new folder at the context path
+Make a folder called Projects
+Yes — deletes the folder
+create_file
+Creates an empty file with a given name
+Create a file called notes.txt
+Yes — sends to trash
+move_file
+Moves a file from one location to another
+Move resume.pdf to Documents
+Yes — moves it back
+rename_file
+Renames a file or folder
+Rename this file to final_v2.pdf
+Yes — renames back
+create_shortcut
+Creates a .lnk shortcut on desktop
+Make a shortcut for Chrome here
+Yes — deletes shortcut
+arrange_by_type
+Sorts files into Images, Docs, Videos, Audio, Others folders
+Arrange all these files by type
+Yes — moves all files back
+
+
+6. Known Difficulties and Solutions
+
+Difficulty
+Why It's Hard
+Solution
+Desktop icon position writing
+Windows has no simple API to place a folder at specific X,Y on desktop
+Fallback: create folder anywhere on desktop if positioning fails
+Groq structured output
+Groq may return free text instead of clean JSON
+Strict system prompt forcing JSON-only response with retry logic
+Explorer path via accessibility
+Accessibility tree structure can differ per Windows version
+Use pywinauto address bar reading with a fallback to window title parsing
+Stale window path
+Explorer may navigate after snip is taken
+Freeze entire context at snip moment — never re-read after
+Permission errors
+OneDrive, system folders, corporate machines block file actions
+Wrap all OS calls in try/except and show friendly error in chat
+Shortcut creation
+Requires COM interface via win32com
+Use win32com.client.Dispatch with Shell.Application — well documented
+
+
+7. Groq System Prompt (Full)
+
+This is the complete system prompt to be used in groq_client.py. It must be sent with every API call.
+
+You are Coral, an AI-powered desktop assistant for Windows.
+
+You receive two inputs:
+1. A context object describing what was snipped (folder path, files, icons).
+2. The user's plain English request.
+
+You must ALWAYS reply with valid JSON in this exact format:
+{
+"message": "I will create a folder called Projects in your Downloads.",
+"action_json": {
+"action": "create_folder",
+"name": "Projects",
+"path": "C:/Users/User/Downloads"
+}
+}
+
+Available actions and their required fields:
+create_folder   → name, path
+create_file     → name, path
+move_file       → from, to
+rename_file     → old_path, new_path
+create_shortcut → target, location, shortcut_name
+arrange_by_type → path
+
+Rules:
+- Always confirm before executing. Never say you have done it.
+- Always use the path from the context object, never invent paths.
+- If the request is unclear, ask for clarification in the message field.
+- Set action_json to null if no action is needed (e.g. just a question).
+- Never return anything outside the JSON structure.
+
+
+8. Undo Reference
+
+Action
+Reverse Action
+How
+create_folder
+delete_folder
+send2trash the created folder path
+create_file
+delete_file
+send2trash the created file path
+move_file
+move_file back
+shutil.move from destination back to source
+rename_file
+rename_file back
+os.rename new_path back to old_path
+create_shortcut
+delete_shortcut
+send2trash the .lnk file
+arrange_by_type
+move all back
+shutil.move each file from subfolder back to original path
+
+
+9. Hackathon Demo Script
+
+Run through this sequence to show Coral's full capability in under 5 minutes.
+
+Demo 1 — Create a Folder on Desktop
+Press Ctrl + Shift + S
+Snip a region of the desktop
+Type: create a folder called Coral Demo
+Coral responds: I will create a folder called Coral Demo on your Desktop. Shall I go ahead?
+Type: yes
+Folder appears on desktop
+
+Demo 2 — Arrange Files in Downloads
+Open File Explorer at Downloads
+Press Ctrl + Shift + S, snip the Explorer window
+Type: arrange all these files by type
+Coral lists what it will do and asks for confirmation
+Type: yes
+Files are sorted into Images, Documents, Videos, Others folders
+
+Demo 3 — Undo
+After Demo 2, type: undo that
+Coral: I will move all files back to Downloads. Shall I?
+Type: yes
+All files return to original location
+
+Demo 4 — Rename a File
+Snip a region containing a file
+Type: rename this to final_submission.pdf
+Coral confirms and renames the file
+
+Demo 5 — Create a Shortcut
+Snip the desktop
+Type: make a shortcut for Chrome on the desktop
+Coral creates a Chrome.lnk shortcut
+
+
+10. Future Features (Post-Hackathon)
+
+Feature
+Description
+Difficulty
+Snip history
+See and reuse your last 5 snips from tray menu
+Easy
+Bulk rename
+Rename all selected files with a pattern like Project_1, Project_2
+Medium
+Search inside snip
+Find all PDFs or files matching a name in the snipped folder
+Easy
+Open app from snip
+Snip a shortcut icon and say open this
+Easy
+Copy file path
+Copy the full path of any visible file to clipboard
+Easy
+Multi-step actions
+Chain actions together in one request
+Medium
+Mac support
+Port to macOS using AppKit instead of pywin32
+Hard
+Unknown app vision
+Fall back to Claude Vision for non-OS surfaces
+Medium
+Plugin system
+Let others add custom actions to Coral
+Hard
+
+
+
+Coral — Built for Hackathon

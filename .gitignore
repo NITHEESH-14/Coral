@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+.venv/
+build/
+dist/
+*.spec
+
+# App Data
+settings.json
+tags.json
+coral_debug.log
+coral_scratchpad.txt
+vault/
+macros/
+
+# OS
+.DS_Store
+Thumbs.db
